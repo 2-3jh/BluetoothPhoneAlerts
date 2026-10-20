@@ -1,0 +1,20 @@
+BluetoothPhoneAlerts Windows 已编译版说明
+====================================
+Windows EXE 已在 Linux 环境下，使用 Go 1.23 交叉编译为 Windows x64 原生 GUI 程序。
+无需安装 Java/Python/Node/.NET，无需联网。未在 Windows 电脑或蓝牙硬件上运行测试。
+
+最简单：直接双击 BluetoothPhoneAlerts.exe，先点击「测试弹窗」确认 Windows 通知功能。
+然后在 Windows 蓝牙设置中与安卓手机配对，手机安装 APK 并启动蓝牙服务，再在 Windows 程序里选手机，点击「连接 / 自动重连」。
+
+如果希望开机自动启动：让 BluetoothPhoneAlerts.exe 和 install-windows.bat 放在同一目录，双击 install-windows.bat。
+安装脚本将复制 EXE 到本机当前账户的 %LOCALAPPDATA%\BluetoothPhoneAlerts 并设置开机启动（可在任务管理器→启动应用或「运行」输入 shell:startup 中管理）。
+
+关闭窗口时程序会隐藏到托盘；双击托盘图标重新打开。点击窗口里的「退出程序」可真正退出。
+
+安卓端 APK 目前无法在此执行环境中编译：没有 Android SDK，且网络下载不可用。可使用源码内的 .github/workflows/build-apps.yml
+在 GitHub Actions 上构建 Android-APK。安卓端使用 Android Studio/Gradle也可以编译。
+
+这里的 Windows EXE 是 Go 重写的 Windows 客户端（源码：windows-go/main_windows.go），使用同一个 RFCOMM UUID 和 JSON/ACK 协议，
+可与原 Android Java 服务端对接。旧 C# 客户端作为源代码保留，但此已编译 EXE 不是 C# 版本。
+
+提示：未经过商业数字签名，Windows SmartScreen 可能显示未知发布者；仅在信任源码并愿意承担个人测试风险时运行。
