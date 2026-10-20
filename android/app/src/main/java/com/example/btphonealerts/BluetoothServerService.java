@@ -26,8 +26,11 @@ public final class BluetoothServerService extends Service {
     private static final String CHANNEL = "btphone_channel";
     private volatile boolean running = false;
     private Thread worker;
-    private BluetoothServerSocket serverSocket;
-    private BluetoothSocket clientSocket;
+    private volatile BluetoothServerSocket serverSocket;
+    private volatile BluetoothSocket clientSocket;
+    private static volatile boolean active = false;
+
+    public static boolean isRunning() { return active; }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -49,6 +52,7 @@ public final class BluetoothServerService extends Service {
         }
         if (!running) {
             running = true;
+            active = true;
             worker = new Thread(this::listenLoop, "rfcomm-listener");
             worker.start();
         }
@@ -132,9 +136,18 @@ public final class BluetoothServerService extends Service {
 
     @Override public void onDestroy() {
         running = false;
+        active = false;
         closeServer();
         try { if (clientSocket != null) clientSocket.close(); } catch (Exception ignored) {}
-        if (worker != null) worker.interrupt();
+        Thread oldWorker = worker;
+        worker = null;
+        if (oldWorker != null) {
+            oldWorker.interrupt();
+            try { oldWorker.join(800L); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+        if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
+        else stopForeground(true);
         super.onDestroy();
     }
 

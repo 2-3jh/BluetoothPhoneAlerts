@@ -1,7 +1,7 @@
 BluetoothPhoneAlerts Windows 已编译版说明
 ====================================
-Windows EXE 已在 Linux 环境下，使用 Go 1.23 交叉编译为 Windows x64 原生 GUI 程序。
-无需安装 Java/Python/Node/.NET，无需联网。未在 Windows 电脑或蓝牙硬件上运行测试。
+Windows EXE 已使用 Go 1.26 在 Windows x64 上编译并完成启动测试。
+无需安装 Java/Python/Node/.NET，无需联网。
 
 最简单：直接双击 BluetoothPhoneAlerts.exe，先点击「测试弹窗」确认 Windows 通知功能。
 然后在 Windows 蓝牙设置中与安卓手机配对，手机安装 APK 并启动蓝牙服务，再在 Windows 程序里选手机，点击「连接 / 自动重连」。
