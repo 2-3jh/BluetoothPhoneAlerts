@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    tags: ['v*']
 
 permissions:
   contents: read
@@ -63,3 +64,34 @@ jobs:
           path: dist/windows/
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-APK
+          path: dist/android
+      - uses: actions/download-artifact@v4
+        with:
+          name: Windows-EXE
+          path: dist/windows
+      - name: Publish test release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv dist/android/app-debug.apk "dist/android/BluetoothPhoneAlerts-Android-${GITHUB_REF_NAME}-debug.apk"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/android/BluetoothPhoneAlerts-Android-${GITHUB_REF_NAME}-debug.apk" \
+            dist/windows/BluetoothPhoneAlerts.exe \
+            dist/windows/install-windows.bat \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "BluetoothPhoneAlerts $GITHUB_REF_NAME（测试版）" \
+            --notes "纯蓝牙版。Android APK 为调试签名，仅供自行安装测试；Windows EXE 为未签名便携版。请先在手机和电脑之间完成蓝牙配对。" \
+            --prerelease

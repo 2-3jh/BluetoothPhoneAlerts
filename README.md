@@ -1,8 +1,8 @@
 # BluetoothPhoneAlerts — Windows + Android 纯蓝牙来电 / 短信提醒
 
-> **简化安装版（v0.2 源码）**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。本源码包没有预先编译好的 APK / EXE；可以通过下文的 GitHub Actions 自动生成，不需要在自己电脑安装开发工具。
+> **v0.3.1 测试版**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。公开下载请到 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)；无需登录 GitHub。
 >
-> **项目未在真实手机/Windows 设备上端到端验证**。GitHub Actions 是否可一次构建成功取决于实际构建环境；这不是经测试的正式发行版。
+> **项目尚未在真实手机/Windows 设备上完成端到端验证**。APK 为调试签名，EXE 未做代码签名；这是供自行测试的版本，不是正式商店发行版。
 
 ## 2026-10-19：已编译 Windows x64 客户端（Go 原生程序）
 
@@ -10,7 +10,7 @@
 
 可单独下载编译后的 Windows 可执行文件包（文件名 `BluetoothPhoneAlerts.exe`）；测试方法：直接双击 → 点击 **「测试弹窗」**；手机 APK 准备好后，再配对手机并点击「连接 / 自动重连」。`install-windows.bat` 可选地设置开机启动。关闭窗口隐藏到托盘，点「退出程序」真正退出。原 `windows/BluetoothPhoneAlerts.Win` **C# 源码仍保留**，但此次编译出来的 EXE 是 **Go 版本，不是 C# 版本**；GitHub Actions 已改为用 Go 构建 EXE。
 
-**构建状态：Windows Go 客户端成功交叉编译，但尚未经过 Windows 11 真机运行和蓝牙连接测试；Android APK 尚未编译。** 当前机器没有 Android SDK 或 Gradle，且不允许下载 SDK；Android APK 仍需使用源码内的 GitHub Actions 或本地 Android Studio 构建。请勿将目前状态理解为双端已通过联调。
+**构建状态：Android APK 与 Windows EXE 已通过 GitHub Actions 构建，但尚未完成真实设备的双端联调。**
 
 ---
 
@@ -26,7 +26,7 @@
 
 ## 没有现成安装包？用 GitHub 免费云编译
 
-不要求在个人电脑安装 Android Studio / .NET SDK / Java / Gradle，但需要 GitHub 账号，并上传此源码到自己建立的仓库。
+直接下载已发布的安装包请访问 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)，无需 GitHub 账号。以下步骤仅供想自行重新编译源码的人使用。
 
 1. GitHub 新建一个仓库，把压缩包内的 **`BluetoothPhoneAlerts/` 文件夹里的所有内容** 放到仓库根目录，包含隐藏的 `.github/workflows/build-apps.yml` 文件（关键）。不要把外层文件夹直接套到仓库根目录，否则路径不对。
 2. 在仓库 **Actions → Build Android APK and Windows EXE → Run workflow** 手动触发；也可以通过推送代码到 `main` / `master` 自动触发。
@@ -69,10 +69,10 @@ Android 是 RFCOMM **服务端**，Windows 是 RFCOMM **客户端**。手机接�
 
 - **Windows 端一直连接失败**：确认两端已配对、Android 已点击“开始蓝牙服务”、蓝牙已开启；可在系统设置里删除配对再重新配对；某些蓝牙驱动不兼容自定义 RFCOMM 服务。
 - **模拟提醒正常，真实短信/来电不触发**：检查短信、电话权限以及手机系统对广播或后台的限制；双卡、VoIP 通话（微信/QQ 等）不属于普通蜂窝电话 `PHONE_STATE`，不监听这些 App 通知。
-- **通知没有弹窗**：确认 Windows 设置 → 系统 → 通知 已开启，且未被免打扰模式/专注模式阻止；程序日志中可以确认事件是否抵达。WinForms `NotifyIcon` 气泡提示的显示方式由 Windows 决定。
+- **通知没有弹窗**：先点电脑端“测试提醒”，确认右下角卡片能出现；再检查蓝牙连接状态与程序日志。系统托盘气泡可能受 Windows 通知设置影响，但卡片不依赖该气泡。
 - **后台服务停止**：需重新打开 Android App 点击开始。首次版本没有开机自动启动，也不保证厂家节电策略杀进程后的自动恢复。
 - **Google Play 发布限制**：`RECEIVE_SMS` 属于受严格限制的权限，Google Play 上架需满足适用政策并审核；这里用于个人侧载验证，不代表可直接上架。
-- **电话内容/电话号码**：为了简单和最小权限，不请求 `READ_CALL_LOG`，不显示电话号码，也不存储短信内容。
+- **电话内容/电话号码**：授权通话记录与联系人后可显示来电号码和联系人；授权短信后可显示短信内容。电脑端通知历史保留最多 30 条、最长 7 天，可在主窗口清空；记录以明文保存在本机，请注意设备隐私。
 - **隐私与安全**：数据只发给当前已配对的蓝牙设备，蓝牙通道使用 Android secure RFCOMM；手机队列最多保留 100 条简单事件，不记录内容。请仅安装到自己的设备上。
 
 ## 待改进
