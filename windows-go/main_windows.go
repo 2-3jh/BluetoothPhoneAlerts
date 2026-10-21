@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -91,6 +92,7 @@ const (
 	IDC_DEVICE     = 103
 	IDC_TEST       = 104
 	IDC_EXIT       = 105
+	IDC_CLEAR      = 106
 	WM_USER_STATUS = WM_APP + 4
 	POPUP_TIMER    = 1
 )
@@ -490,22 +492,82 @@ func showAlertCard(title, body string) {
 func historyPath() string {
 	return filepath.Join(os.Getenv("LOCALAPPDATA"), "BluetoothPhoneAlerts", "notification-history.txt")
 }
-func appendHistory(title, body string) {
-	path := historyPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0700)
-	old, _ := os.ReadFile(path)
-	text := string(old) + fmt.Sprintf("[%s] %s\r\n%s\r\n\r\n", time.Now().Format("2006-01-02 15:04:05"), title, body)
-	runes := []rune(text)
-	if len(runes) > 30000 {
-		runes = runes[len(runes)-30000:]
+
+type historyEntry struct {
+	when  time.Time
+	title string
+	body  string
+}
+
+var historyHeader = regexp.MustCompile(`(?m)^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] ([^\r\n]*)\r?$`)
+
+func readHistory() []historyEntry {
+	data, err := os.ReadFile(historyPath())
+	if err != nil {
+		return nil
 	}
-	_ = os.WriteFile(path, []byte(string(runes)), 0600)
+	return parseHistory(string(data), time.Now())
+}
+
+func parseHistory(content string, now time.Time) []historyEntry {
+	matches := historyHeader.FindAllStringSubmatchIndex(content, -1)
+	entries := make([]historyEntry, 0, len(matches))
+	cutoff := now.Add(-7 * 24 * time.Hour)
+	for i, match := range matches {
+		when, err := time.ParseInLocation("2006-01-02 15:04:05", content[match[2]:match[3]], time.Local)
+		if err != nil || when.Before(cutoff) {
+			continue
+		}
+		end := len(content)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		body := strings.Trim(content[match[1]:end], "\r\n")
+		entries = append(entries, historyEntry{when, content[match[4]:match[5]], body})
+	}
+	if len(entries) > 30 {
+		entries = entries[len(entries)-30:]
+	}
+	return entries
+}
+
+func saveHistory(entries []historyEntry) error {
+	path := historyPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	var out strings.Builder
+	for _, entry := range entries {
+		fmt.Fprintf(&out, "[%s] %s\r\n%s\r\n\r\n", entry.when.Format("2006-01-02 15:04:05"), entry.title, entry.body)
+	}
+	return os.WriteFile(path, []byte(out.String()), 0600)
+}
+
+func appendHistory(title, body string) {
+	entries := append(readHistory(), historyEntry{time.Now(), title, body})
+	if len(entries) > 30 {
+		entries = entries[len(entries)-30:]
+	}
+	if err := saveHistory(entries); err != nil {
+		logUI("保存通知记录失败：" + err.Error())
+	}
 }
 func loadHistory() {
-	data, err := os.ReadFile(historyPath())
-	if err == nil && len(data) > 0 {
-		call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(string(data)))))
+	entries := readHistory()
+	if err := saveHistory(entries); err != nil {
+		logUI("清理过期记录失败：" + err.Error())
+		return
 	}
+	data, _ := os.ReadFile(historyPath())
+	call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(string(data)))))
+}
+func clearHistory() {
+	if err := os.Remove(historyPath()); err != nil && !os.IsNotExist(err) {
+		logUI("清空记录失败：" + err.Error())
+		return
+	}
+	call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(""))))
+	logUI("历史通知已清空")
 }
 func startConnection() {
 	connMu.Lock()
@@ -718,6 +780,8 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case IDC_EXIT:
 			closing = true
 			call(destroyWindow, window)
+		case IDC_CLEAR:
+			clearHistory()
 		}
 		return 0
 	case WM_LOG, WM_USER_STATUS:
@@ -802,6 +866,7 @@ func main() {
 	control("STATIC", "连接状态", 0, 24, 226, 80, 25, 0)
 	statusLabel = control("STATIC", "未连接", 0, 108, 226, 566, 25, 0)
 	control("STATIC", "运行记录", 0, 24, 264, 100, 25, 0)
+	control("BUTTON", "清空记录", 0, 562, 258, 112, 30, IDC_CLEAR)
 	logEdit = control("EDIT", "", WS_BORDER|WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY, 24, 292, 650, 164, 0)
 	control("STATIC", "关闭窗口后仍会在系统托盘运行 · 双击托盘图标可重新打开", 0, 24, 472, 500, 24, 0)
 	loadHistory()
