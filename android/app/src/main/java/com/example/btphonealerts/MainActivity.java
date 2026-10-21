@@ -144,7 +144,7 @@ public final class MainActivity extends Activity {
     }
 
     private View privacyNote() {
-        TextView note = text("隐私保护：只发送“来电”或“短信”事件类型，不读取短信正文、联系人或电话号码。", 13, MUTED);
+        TextView note = text("隐私保护：短信内容、来电号码和联系人名称只会通过已配对的蓝牙连接发送到电脑，不联网。", 13, MUTED);
         note.setLineSpacing(0, 1.2f);
         note.setPadding(dp(14), dp(12), dp(14), dp(12));
         note.setBackground(rounded(Color.rgb(232, 245, 239), 14));
@@ -186,6 +186,8 @@ public final class MainActivity extends Activity {
             missing.add(Manifest.permission.BLUETOOTH_CONNECT);
         if (!granted(Manifest.permission.RECEIVE_SMS)) missing.add(Manifest.permission.RECEIVE_SMS);
         if (!granted(Manifest.permission.READ_PHONE_STATE)) missing.add(Manifest.permission.READ_PHONE_STATE);
+        if (!granted(Manifest.permission.READ_CALL_LOG)) missing.add(Manifest.permission.READ_CALL_LOG);
+        if (!granted(Manifest.permission.READ_CONTACTS)) missing.add(Manifest.permission.READ_CONTACTS);
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS))
             missing.add(Manifest.permission.POST_NOTIFICATIONS);
         if (!missing.isEmpty()) requestPermissions(missing.toArray(new String[0]), REQUEST_PERMS);
@@ -201,8 +203,9 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 31 && !granted(Manifest.permission.BLUETOOTH_CONNECT)) {
             Toast.makeText(this, "必须授权附近设备（蓝牙）", Toast.LENGTH_LONG).show(); return;
         }
-        if (!granted(Manifest.permission.RECEIVE_SMS) || !granted(Manifest.permission.READ_PHONE_STATE)) {
-            Toast.makeText(this, "要监听真实事件需授权短信和电话状态", Toast.LENGTH_LONG).show(); return;
+        if (!granted(Manifest.permission.RECEIVE_SMS) || !granted(Manifest.permission.READ_PHONE_STATE) ||
+                !granted(Manifest.permission.READ_CALL_LOG) || !granted(Manifest.permission.READ_CONTACTS)) {
+			Toast.makeText(this, "需授权短信、电话状态、通话记录和联系人才能显示详情", Toast.LENGTH_LONG).show(); return;
         }
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null) { Toast.makeText(this, "设备不支持蓝牙", Toast.LENGTH_LONG).show(); return; }

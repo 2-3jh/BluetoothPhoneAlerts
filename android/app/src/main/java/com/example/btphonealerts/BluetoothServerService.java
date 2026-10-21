@@ -12,6 +12,8 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.os.BatteryManager;
+import android.content.IntentFilter;
 import android.util.Log;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -73,6 +75,7 @@ public final class BluetoothServerService extends Service {
                     BluetoothSocket socket = serverSocket.accept();
                     if (!running) { socket.close(); break; }
                     clientSocket = socket;
+                    queuePhoneStatus();
                     try { handleClient(socket); }
                     finally {
                         try { socket.close(); } catch (Exception ignored) {}
@@ -86,6 +89,20 @@ public final class BluetoothServerService extends Service {
                 closeServer();
             }
         }
+    }
+
+    private void queuePhoneStatus() {
+        Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (battery == null) return;
+        int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
+        int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+        int percent = level < 0 ? -1 : Math.round(level * 100f / Math.max(1, scale));
+        boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL;
+        String body = (percent < 0 ? "电量未知" : "电量 " + percent + "%") +
+                (charging ? " · 正在充电" : " · 未充电");
+        EventStore.add(this, "status", "手机状态", body);
     }
 
     private void handleClient(BluetoothSocket socket) throws Exception {

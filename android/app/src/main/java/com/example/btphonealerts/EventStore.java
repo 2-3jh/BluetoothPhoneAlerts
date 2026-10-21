@@ -24,7 +24,11 @@ public final class EventStore {
     }
 
     public static synchronized void add(Context c, String kind) {
-        if (!kind.equals("sms") && !kind.equals("call") && !kind.equals("test")) return;
+        add(c, kind, "", "");
+    }
+
+    public static synchronized void add(Context c, String kind, String title, String body) {
+        if (!kind.equals("sms") && !kind.equals("call") && !kind.equals("test") && !kind.equals("status")) return;
         try {
             JSONArray old = load(c);
             JSONArray next = new JSONArray();
@@ -35,9 +39,16 @@ public final class EventStore {
             JSONObject alert = new JSONObject();
             alert.put("id", UUID.randomUUID().toString());
             alert.put("type", kind);
+            alert.put("title", limit(title, 160));
+            alert.put("body", limit(body, 1200));
             next.put(alert);
             pref(c).edit().putString(QUEUE, next.toString()).commit();
         } catch (JSONException ignored) {}
+    }
+
+    private static String limit(String value, int max) {
+        if (value == null) return "";
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     public static synchronized JSONObject peek(Context c) {

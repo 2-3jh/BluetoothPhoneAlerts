@@ -172,6 +172,7 @@ type btDevice struct {
 	address uint64
 	name    string
 }
+type alertMessage struct{ kind, title, body string }
 
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
@@ -223,7 +224,7 @@ var (
 	btDevices       []btDevice
 	uiMu            sync.Mutex
 	uiMessages      []string
-	uiAlerts        []string
+	uiAlerts        []alertMessage
 	connMu          sync.Mutex
 	activeSocket    uintptr = INVALID_SOCKET
 	cancel          chan struct{}
@@ -355,9 +356,9 @@ func sendUI(msg string) {
 	uiMu.Unlock()
 	call(postMessage, window, WM_LOG, 0, 0)
 }
-func sendAlert(kind string) {
+func sendAlert(kind, title, body string) {
 	uiMu.Lock()
-	uiAlerts = append(uiAlerts, kind)
+	uiAlerts = append(uiAlerts, alertMessage{kind: kind, title: title, body: body})
 	uiMu.Unlock()
 	call(postMessage, window, WM_ALERT, 0, 0)
 }
@@ -398,13 +399,14 @@ func tray(action uint32, title, msg string) {
 	}
 	call(notifyIcon, uintptr(action), uintptr(unsafe.Pointer(&n)))
 }
-func showAlertsNow() { sendAlert("test") }
+func showAlertsNow() { sendAlert("test", "", "") }
 func showAlerts() {
 	uiMu.Lock()
 	alerts := uiAlerts
 	uiAlerts = nil
 	uiMu.Unlock()
-	for _, kind := range alerts {
+	for _, alert := range alerts {
+		kind := alert.kind
 		title, body := "蓝牙测试成功", "手机与电脑蓝牙连接正常"
 		if kind == "sms" {
 			title, body = "手机收到新短信", "请打开手机查看短信"
@@ -412,13 +414,46 @@ func showAlerts() {
 		if kind == "call" {
 			title, body = "手机有来电", "请查看手机上的来电"
 		}
+		if alert.title != "" {
+			title = alert.title
+		}
+		if alert.body != "" {
+			body = alert.body
+		}
+		if kind == "status" {
+			setStatus(body)
+			logUI(title + "：" + body)
+			continue
+		}
 		logUI(title)
+		appendHistory(title, body)
 		tray(NIM_MODIFY, title, body)
 		// Legacy tray balloons can be suppressed by Windows notification
 		// settings. Keep them for Notification Center, and also show an
 		// explicit topmost dialog so calls and messages are never silent.
 		call(messageBox, 0, uintptr(unsafe.Pointer(u16(body))), uintptr(unsafe.Pointer(u16(title))),
 			MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND|MB_TOPMOST)
+	}
+}
+
+func historyPath() string {
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "BluetoothPhoneAlerts", "notification-history.txt")
+}
+func appendHistory(title, body string) {
+	path := historyPath()
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
+	old, _ := os.ReadFile(path)
+	text := string(old) + fmt.Sprintf("[%s] %s\r\n%s\r\n\r\n", time.Now().Format("2006-01-02 15:04:05"), title, body)
+	runes := []rune(text)
+	if len(runes) > 30000 {
+		runes = runes[len(runes)-30000:]
+	}
+	_ = os.WriteFile(path, []byte(string(runes)), 0600)
+}
+func loadHistory() {
+	data, err := os.ReadFile(historyPath())
+	if err == nil && len(data) > 0 {
+		call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(string(data)))))
 	}
 }
 func startConnection() {
@@ -579,8 +614,10 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 			line := bytes.TrimSpace(pending[:idx])
 			pending = pending[idx+1:]
 			var value struct {
-				ID   string `json:"id"`
-				Type string `json:"type"`
+				ID    string `json:"id"`
+				Type  string `json:"type"`
+				Title string `json:"title"`
+				Body  string `json:"body"`
 			}
 			if err := json.Unmarshal(line, &value); err != nil {
 				sendUI("忽略无效的手机消息")
@@ -589,14 +626,14 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 			if len(value.ID) == 0 || len(value.ID) > 100 {
 				continue
 			}
-			if value.Type != "sms" && value.Type != "call" && value.Type != "test" {
+			if value.Type != "sms" && value.Type != "call" && value.Type != "test" && value.Type != "status" {
 				continue
 			}
 			if err := socketSend(sock, []byte("ACK|"+value.ID+"\n")); err != nil {
 				return err
 			}
 			if rememberID(value.ID) {
-				sendAlert(value.Type)
+				sendAlert(value.Type, value.Title, value.Body)
 			}
 		}
 	}
@@ -702,6 +739,7 @@ func main() {
 	control("STATIC", "运行记录", 0, 24, 264, 100, 25, 0)
 	logEdit = control("EDIT", "", WS_BORDER|WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY, 24, 292, 650, 164, 0)
 	control("STATIC", "关闭窗口后仍会在系统托盘运行 · 双击托盘图标可重新打开", 0, 24, 472, 500, 24, 0)
+	loadHistory()
 	tray(NIM_ADD, "", "")
 	updateDevices()
 	logUI("双击托盘图标可以打开窗口。关闭窗口会隐藏到后台。")
