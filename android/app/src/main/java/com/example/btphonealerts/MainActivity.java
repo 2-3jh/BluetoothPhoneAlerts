@@ -203,10 +203,8 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 31 && !granted(Manifest.permission.BLUETOOTH_CONNECT)) {
             Toast.makeText(this, "必须授权附近设备（蓝牙）", Toast.LENGTH_LONG).show(); return;
         }
-        if (!granted(Manifest.permission.RECEIVE_SMS) || !granted(Manifest.permission.READ_PHONE_STATE) ||
-                !granted(Manifest.permission.READ_CALL_LOG) || !granted(Manifest.permission.READ_CONTACTS)) {
-			Toast.makeText(this, "需授权短信、电话状态、通话记录和联系人才能显示详情", Toast.LENGTH_LONG).show(); return;
-        }
+        if (!granted(Manifest.permission.RECEIVE_SMS) || !granted(Manifest.permission.READ_PHONE_STATE))
+            Toast.makeText(this, "短信或电话权限未授权，对应提醒暂不可用", Toast.LENGTH_LONG).show();
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null) { Toast.makeText(this, "设备不支持蓝牙", Toast.LENGTH_LONG).show(); return; }
         if (!adapter.isEnabled()) {

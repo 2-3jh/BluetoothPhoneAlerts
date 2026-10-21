@@ -44,6 +44,7 @@ const (
 	WS_HSCROLL          = 0x00100000
 	WM_DESTROY          = 0x0002
 	WM_CLOSE            = 0x0010
+	WM_TIMER            = 0x0113
 	WM_COMMAND          = 0x0111
 	WM_SETFONT          = 0x0030
 	WM_CTLCOLORSTATIC   = 0x0138
@@ -53,6 +54,14 @@ const (
 	SW_HIDE             = 0
 	SW_SHOW             = 5
 	SW_RESTORE          = 9
+	SW_SHOWNOACTIVATE   = 4
+	WS_POPUP            = 0x80000000
+	WS_CAPTION          = 0x00C00000
+	WS_SYSMENU          = 0x00080000
+	HWND_TOPMOST        = ^uintptr(0)
+	SWP_NOACTIVATE      = 0x0010
+	SM_CXSCREEN         = 0
+	SM_CYSCREEN         = 1
 	MB_OK               = 0
 	MB_ICONWARNING      = 0x30
 	MB_ICONINFORMATION  = 0x40
@@ -83,6 +92,7 @@ const (
 	IDC_TEST       = 104
 	IDC_EXIT       = 105
 	WM_USER_STATUS = WM_APP + 4
+	POPUP_TIMER    = 1
 )
 
 type guid struct {
@@ -194,6 +204,10 @@ var (
 	showWindow       = user32.NewProc("ShowWindow")
 	updateWindow     = user32.NewProc("UpdateWindow")
 	setWindowText    = user32.NewProc("SetWindowTextW")
+	setWindowPos     = user32.NewProc("SetWindowPos")
+	getSystemMetrics = user32.NewProc("GetSystemMetrics")
+	setTimer         = user32.NewProc("SetTimer")
+	killTimer        = user32.NewProc("KillTimer")
 	messageBox       = user32.NewProc("MessageBoxW")
 	destroyWindow    = user32.NewProc("DestroyWindow")
 	loadIcon         = user32.NewProc("LoadIconW")
@@ -237,6 +251,10 @@ var (
 	headerPanel     uintptr
 	headerTitle     uintptr
 	headerSubtitle  uintptr
+	alertWindow     uintptr
+	alertHeader     uintptr
+	alertTitle      uintptr
+	alertBody       uintptr
 	seenMu          sync.Mutex
 	seenIds         = make(map[string]bool)
 	seenOrder       []string
@@ -329,6 +347,7 @@ func updateDevices() {
 	call(sendMessage, combo, CB_RESETCONTENT, 0, 0)
 	devices, err := listPairedDevices()
 	if err != nil {
+		btDevices = nil
 		logUI(err.Error())
 		setStatus("请先在 Windows 蓝牙设置中配对手机")
 		return
@@ -350,7 +369,6 @@ func updateDevices() {
 }
 
 func sendUI(msg string) {
-	fmt.Println(msg)
 	uiMu.Lock()
 	uiMessages = append(uiMessages, msg)
 	uiMu.Unlock()
@@ -425,15 +443,48 @@ func showAlerts() {
 			logUI(title + "：" + body)
 			continue
 		}
-		logUI(title)
+		logUI(title + "：" + body)
 		appendHistory(title, body)
 		tray(NIM_MODIFY, title, body)
-		// Legacy tray balloons can be suppressed by Windows notification
-		// settings. Keep them for Notification Center, and also show an
-		// explicit topmost dialog so calls and messages are never silent.
-		call(messageBox, 0, uintptr(unsafe.Pointer(u16(body))), uintptr(unsafe.Pointer(u16(title))),
-			MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND|MB_TOPMOST)
+		showAlertCard(title, body)
 	}
+}
+
+func alertControl(class, value string, style uint32, x, y, width, height int32) uintptr {
+	h := call(createWindow, 0, uintptr(unsafe.Pointer(u16(class))), uintptr(unsafe.Pointer(u16(value))),
+		uintptr(style|WS_CHILD|WS_VISIBLE), uintptr(x), uintptr(y), uintptr(width), uintptr(height), alertWindow, 0, 0, 0)
+	call(sendMessage, h, WM_SETFONT, uiFont, 1)
+	return h
+}
+
+func showAlertCard(title, body string) {
+	if alertWindow == 0 {
+		instance := call(getModuleHandle, 0)
+		alertWindow = call(createWindow, 0, uintptr(unsafe.Pointer(u16("BluetoothPhoneAlertsGoWindow"))),
+			uintptr(unsafe.Pointer(u16("蓝牙提醒"))), WS_POPUP|WS_CAPTION|WS_SYSMENU,
+			0, 0, 460, 230, 0, 0, instance, 0)
+		if alertWindow == 0 {
+			return
+		}
+		alertHeader = alertControl("STATIC", "  手机通知", 0, 0, 0, 460, 38)
+		alertTitle = alertControl("STATIC", "", 0, 22, 53, 415, 34)
+		call(sendMessage, alertTitle, WM_SETFONT, titleFont, 1)
+		alertBody = alertControl("STATIC", "", 0, 22, 96, 415, 100)
+		alertControl("STATIC", "完整记录请在主窗口查看 · 15 秒后自动收起", 0, 22, 198, 415, 22)
+	}
+	call(setWindowText, alertTitle, uintptr(unsafe.Pointer(u16(title))))
+	// Keep the complete message in history; the preview fits inside the card.
+	preview := []rune(body)
+	if len(preview) > 180 {
+		preview = append(preview[:180], []rune("…")...)
+	}
+	call(setWindowText, alertBody, uintptr(unsafe.Pointer(u16(string(preview)))))
+	x := int32(call(getSystemMetrics, SM_CXSCREEN)) - 480
+	y := int32(call(getSystemMetrics, SM_CYSCREEN)) - 270
+	call(setWindowPos, alertWindow, HWND_TOPMOST, uintptr(x), uintptr(y), 460, 230, SWP_NOACTIVATE)
+	call(showWindow, alertWindow, SW_SHOWNOACTIVATE)
+	call(killTimer, alertWindow, POPUP_TIMER)
+	call(setTimer, alertWindow, POPUP_TIMER, 15000, 0)
 }
 
 func historyPath() string {
@@ -603,9 +654,6 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 			return fmt.Errorf("手机关闭了连接")
 		}
 		pending = append(pending, buf[:n]...)
-		if len(pending) > 8192 {
-			return fmt.Errorf("收到过长消息")
-		}
 		for {
 			idx := bytes.IndexByte(pending, '\n')
 			if idx < 0 {
@@ -636,11 +684,25 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 				sendAlert(value.Type, value.Title, value.Body)
 			}
 		}
+		if len(pending) > 8192 {
+			return fmt.Errorf("收到过长消息")
+		}
 	}
 	return nil
 }
 
 func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	if hwnd == alertWindow && alertWindow != 0 {
+		switch msg {
+		case WM_CLOSE, WM_TIMER:
+			call(killTimer, alertWindow, POPUP_TIMER)
+			call(showWindow, alertWindow, SW_HIDE)
+			return 0
+		case WM_DESTROY:
+			alertWindow = 0
+			return 0
+		}
+	}
 	switch msg {
 	case WM_COMMAND:
 		switch wParam & 0xffff {
@@ -672,7 +734,7 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case WM_CTLCOLORSTATIC:
 		call(setBkMode, wParam, 1)
-		if lParam == headerPanel || lParam == headerTitle || lParam == headerSubtitle {
+		if lParam == headerPanel || lParam == headerTitle || lParam == headerSubtitle || lParam == alertHeader {
 			if lParam == headerSubtitle {
 				call(setTextColor, wParam, 0x00F5E6DB)
 			} else {
@@ -690,6 +752,9 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return call(defWindowProc, hwnd, uintptr(msg), wParam, lParam)
 	case WM_DESTROY:
 		stopConnection()
+		if alertWindow != 0 {
+			call(destroyWindow, alertWindow)
+		}
 		tray(NIM_DELETE, "", "")
 		call(postQuitMessage, 0)
 		return 0
