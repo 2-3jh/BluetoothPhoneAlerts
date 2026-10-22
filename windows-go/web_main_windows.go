@@ -26,7 +26,10 @@ var webCSS string
 //go:embed ui/app.js
 var webJS string
 
-type webDevice struct{ Name, Address string }
+type webDevice struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
 type webNotice struct {
 	ID    int64  `json:"id"`
 	Title string `json:"title"`
@@ -36,6 +39,7 @@ type webState struct {
 	Devices         []webDevice `json:"devices"`
 	SelectedAddress string      `json:"selectedAddress"`
 	Status          string      `json:"status"`
+	Battery         string      `json:"battery"`
 	Logs            []string    `json:"logs"`
 	Notices         []webNotice `json:"notices"`
 }
@@ -45,6 +49,7 @@ var (
 	webStateMu       sync.Mutex
 	webDeviceMu      sync.RWMutex
 	webCurrentStatus = "未连接"
+	webBattery       string
 	webLogs          []string
 	webNotices       []webNotice
 	webView          webview2.WebView
@@ -56,6 +61,7 @@ var (
 var (
 	setWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
 	callWindowProc   = user32.NewProc("CallWindowProcW")
+	isWindowVisible  = user32.NewProc("IsWindowVisible")
 )
 
 func webWindowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
@@ -75,12 +81,13 @@ func appendWebLog(line string) {
 	}
 }
 
-func clearWebLogs()              { webStateMu.Lock(); webLogs = nil; webStateMu.Unlock() }
-func setWebStatus(status string) { webStateMu.Lock(); webCurrentStatus = status; webStateMu.Unlock() }
+func clearWebLogs()                { webStateMu.Lock(); webLogs = nil; webStateMu.Unlock() }
+func setWebStatus(status string)   { webStateMu.Lock(); webCurrentStatus = status; webStateMu.Unlock() }
+func setWebBattery(battery string) { webStateMu.Lock(); webBattery = battery; webStateMu.Unlock() }
 
 func processWebAlert(kind, title, body string) {
 	if kind == "status" {
-		setStatus(body)
+		setWebBattery(body)
 		logUI(title + "：" + body)
 		return
 	}
@@ -107,12 +114,16 @@ func processWebAlert(kind, title, body string) {
 	logUI(title + "：" + body)
 	appendHistory(title, body)
 	tray(NIM_MODIFY, title, body)
-	webStateMu.Lock()
-	webNotices = append(webNotices, webNotice{time.Now().UnixNano(), title, body})
-	if len(webNotices) > 8 {
-		webNotices = webNotices[len(webNotices)-8:]
+	if webWindow != 0 && call(isWindowVisible, webWindow) != 0 {
+		webStateMu.Lock()
+		webNotices = append(webNotices, webNotice{time.Now().UnixNano(), title, body})
+		if len(webNotices) > 8 {
+			webNotices = webNotices[len(webNotices)-8:]
+		}
+		webStateMu.Unlock()
+	} else if webView != nil {
+		webView.Dispatch(func() { showAlertCard(title, body) })
 	}
-	webStateMu.Unlock()
 }
 
 func refreshWebDevices() error {
@@ -134,7 +145,7 @@ func refreshWebDevices() error {
 
 func currentWebState() webState {
 	webStateMu.Lock()
-	state := webState{Status: webCurrentStatus, Logs: append([]string(nil), webLogs...), Notices: append([]webNotice(nil), webNotices...)}
+	state := webState{Status: webCurrentStatus, Battery: webBattery, Logs: append([]string(nil), webLogs...), Notices: append([]webNotice(nil), webNotices...)}
 	webStateMu.Unlock()
 	saved := loadSavedAddress()
 	if saved != 0 {
@@ -199,10 +210,20 @@ func main() {
 	instance := call(getModuleHandle, 0)
 	className := u16("BluetoothPhoneAlertsWebWindow")
 	backgroundBrush = call(createSolidBrush, color(234, 242, 255))
+	headerBrush = call(createSolidBrush, color(55, 105, 225))
+	cardBrush = call(createSolidBrush, color(255, 255, 255))
+	uiFont = call(createFont, uintptr(^uint32(17)), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(u16("Microsoft YaHei UI"))))
+	titleFont = call(createFont, uintptr(^uint32(25)), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(u16("Microsoft YaHei UI"))))
 	trayIcon = call(loadIcon, 0, 32516)
 	wc := wndClassEx{size: uint32(unsafe.Sizeof(wndClassEx{})), style: 3, wndProc: syscall.NewCallback(windowProcedure), instance: instance,
 		cursor: call(loadCursor, 0, 32512), icon: trayIcon, iconSmall: trayIcon, background: backgroundBrush, className: className}
 	if call(registerClass, uintptr(unsafe.Pointer(&wc))) == 0 {
+		return
+	}
+	alertClassName := u16("BluetoothPhoneAlertsGoWindow")
+	alertClass := wc
+	alertClass.className = alertClassName
+	if call(registerClass, uintptr(unsafe.Pointer(&alertClass))) == 0 {
 		return
 	}
 	window = call(createWindow, 0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(u16("BluetoothPhoneAlertsTray"))),

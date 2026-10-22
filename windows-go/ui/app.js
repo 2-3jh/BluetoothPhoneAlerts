@@ -9,6 +9,7 @@ async function syncState() {
   try {
     const s = await appState();
     document.getElementById('status').textContent = s.status || '未连接';
+    document.getElementById('battery').textContent = s.battery || '手机电量：等待手机状态';
     const pill = document.getElementById('connectionPill');
     const connected = (s.status || '').includes('已连接');
     pill.classList.toggle('connected', connected);
