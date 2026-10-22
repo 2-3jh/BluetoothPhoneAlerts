@@ -55,7 +55,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/windows
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-H=windowsgui -s -w" -o dist/windows/BluetoothPhoneAlerts.exe windows-go/main_windows.go
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-H=windowsgui -s -w" -o dist/windows/BluetoothPhoneAlerts.exe ./windows-go
           cp windows/install-windows.bat dist/windows/install-windows.bat
       - name: Upload Windows portable app
         uses: actions/upload-artifact@v4

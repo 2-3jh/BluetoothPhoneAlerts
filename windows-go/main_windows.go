@@ -43,6 +43,9 @@ const (
 	ES_AUTOVSCROLL      = 0x40
 	ES_READONLY         = 0x800
 	WS_HSCROLL          = 0x00100000
+	BS_OWNERDRAW        = 0x0000000B
+	SS_OWNERDRAW        = 0x0000000D
+	WM_DRAWITEM         = 0x002B
 	WM_DESTROY          = 0x0002
 	WM_CLOSE            = 0x0010
 	WM_TIMER            = 0x0113
@@ -74,6 +77,12 @@ const (
 	CB_SETCURSEL        = 0x014E
 	EM_SETSEL           = 0x00B1
 	EM_REPLACESEL       = 0x00C2
+	EM_SETLIMITTEXT     = 0x00C5
+	EM_SETBKGNDCOLOR    = 0x0443
+	DT_CENTER           = 0x0001
+	DT_VCENTER          = 0x0004
+	DT_SINGLELINE       = 0x0020
+	ODS_SELECTED        = 0x0001
 	NIM_ADD             = 0
 	NIM_MODIFY          = 1
 	NIM_DELETE          = 2
@@ -152,6 +161,13 @@ type wndClassEx struct {
 	iconSmall  uintptr
 }
 type point struct{ x, y int32 }
+type rect struct{ left, top, right, bottom int32 }
+type drawItem struct {
+	controlType, controlID, itemID, itemAction, itemState uint32
+	hwndItem, hdc                                         uintptr
+	itemRect                                              rect
+	itemData                                              uintptr
+}
 type winMsg struct {
 	hwnd           uintptr
 	message        uint32
@@ -193,6 +209,8 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	bthapi   = syscall.NewLazyDLL("BluetoothApis.dll")
 	ws2      = syscall.NewLazyDLL("ws2_32.dll")
+	msftedit = syscall.NewLazyDLL("Msftedit.dll")
+	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
 
 	registerClass    = user32.NewProc("RegisterClassExW")
 	createWindow     = user32.NewProc("CreateWindowExW")
@@ -220,6 +238,15 @@ var (
 	createFont       = gdi32.NewProc("CreateFontW")
 	setBkMode        = gdi32.NewProc("SetBkMode")
 	setTextColor     = gdi32.NewProc("SetTextColor")
+	setBkColor       = gdi32.NewProc("SetBkColor")
+	selectObject     = gdi32.NewProc("SelectObject")
+	deleteObject     = gdi32.NewProc("DeleteObject")
+	createPen        = gdi32.NewProc("CreatePen")
+	roundRect        = gdi32.NewProc("RoundRect")
+	ellipse          = gdi32.NewProc("Ellipse")
+	drawText         = user32.NewProc("DrawTextW")
+	getWindowText    = user32.NewProc("GetWindowTextW")
+	dwmSetAttribute  = dwmapi.NewProc("DwmSetWindowAttribute")
 	notifyIcon       = shell32.NewProc("Shell_NotifyIconW")
 	findFirstDevice  = bthapi.NewProc("BluetoothFindFirstDevice")
 	findNextDevice   = bthapi.NewProc("BluetoothFindNextDevice")
@@ -248,16 +275,24 @@ var (
 	trayIcon        uintptr
 	backgroundBrush uintptr
 	headerBrush     uintptr
+	cardBrush       uintptr
+	mutedBrush      uintptr
 	uiFont          uintptr
 	titleFont       uintptr
+	sectionFont     uintptr
 	headerPanel     uintptr
 	headerTitle     uintptr
 	headerSubtitle  uintptr
+	devicePanel     uintptr
+	statusPanel     uintptr
+	historyPanel    uintptr
+	footerLabel     uintptr
 	alertWindow     uintptr
 	alertHeader     uintptr
 	alertTitle      uintptr
 	alertBody       uintptr
 	seenMu          sync.Mutex
+	historyMu       sync.Mutex
 	seenIds         = make(map[string]bool)
 	seenOrder       []string
 )
@@ -276,6 +311,60 @@ func str16(a []uint16) string {
 		n++
 	}
 	return string(utf16.Decode(a[:n]))
+}
+func color(r, g, b byte) uintptr { return uintptr(r) | uintptr(g)<<8 | uintptr(b)<<16 }
+
+func paintRounded(hdc uintptr, area rect, fill, outline uintptr, radius int32) {
+	brush := call(createSolidBrush, fill)
+	pen := call(createPen, 0, 1, outline)
+	oldBrush := call(selectObject, hdc, brush)
+	oldPen := call(selectObject, hdc, pen)
+	call(roundRect, hdc, uintptr(area.left), uintptr(area.top), uintptr(area.right), uintptr(area.bottom), uintptr(radius), uintptr(radius))
+	call(selectObject, hdc, oldPen)
+	call(selectObject, hdc, oldBrush)
+	call(deleteObject, pen)
+	call(deleteObject, brush)
+}
+
+func drawGlassItem(item *drawItem) {
+	area := item.itemRect
+	if item.hwndItem == headerPanel {
+		paintRounded(item.hdc, area, color(55, 105, 225), color(55, 105, 225), 34)
+		brush := call(createSolidBrush, color(83, 135, 239))
+		old := call(selectObject, item.hdc, brush)
+		call(ellipse, item.hdc, uintptr(area.right-170), uintptr(area.top-100), uintptr(area.right+80), uintptr(area.top+150))
+		call(selectObject, item.hdc, old)
+		call(deleteObject, brush)
+		return
+	}
+	if item.hwndItem == devicePanel || item.hwndItem == statusPanel || item.hwndItem == historyPanel {
+		fill := color(255, 255, 255)
+		if item.hwndItem == statusPanel {
+			fill = color(245, 249, 255)
+		}
+		paintRounded(item.hdc, area, fill, color(218, 230, 250), 28)
+		return
+	}
+	var label [128]uint16
+	call(getWindowText, item.hwndItem, uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)))
+	primary := item.controlID == IDC_CONNECT
+	fill, edge, ink := color(247, 250, 255), color(213, 225, 247), color(40, 61, 95)
+	if primary {
+		fill, edge, ink = color(58, 105, 224), color(58, 105, 224), color(255, 255, 255)
+	}
+	if item.itemState&ODS_SELECTED != 0 {
+		if primary {
+			fill = color(42, 85, 196)
+		} else {
+			fill = color(226, 237, 255)
+		}
+	}
+	paintRounded(item.hdc, area, fill, edge, 20)
+	call(setBkMode, item.hdc, 1)
+	call(setTextColor, item.hdc, ink)
+	oldFont := call(selectObject, item.hdc, uiFont)
+	call(drawText, item.hdc, uintptr(unsafe.Pointer(&label[0])), ^uintptr(0), uintptr(unsafe.Pointer(&area)), DT_CENTER|DT_VCENTER|DT_SINGLELINE)
+	call(selectObject, item.hdc, oldFont)
 }
 func call(p *syscall.LazyProc, args ...uintptr) uintptr { r, _, _ := p.Call(args...); return r }
 func syscallError() string                              { return fmt.Sprintf("WinSock 错误 %d", call(wsaGetLastError)) }
@@ -335,10 +424,20 @@ func control(class, title string, style uint32, x, y, w, h int32, id uintptr) ui
 }
 func logUI(s string) {
 	line := fmt.Sprintf("[%s] %s\r\n", time.Now().Format("15:04:05"), s)
+	if webMode {
+		appendWebLog(strings.TrimSpace(line))
+		return
+	}
 	call(sendMessage, logEdit, EM_SETSEL, ^uintptr(0), ^uintptr(0))
 	call(sendMessage, logEdit, EM_REPLACESEL, 0, uintptr(unsafe.Pointer(u16(line))))
 }
-func setStatus(s string) { call(setWindowText, statusLabel, uintptr(unsafe.Pointer(u16(s)))) }
+func setStatus(s string) {
+	if webMode {
+		setWebStatus(s)
+		return
+	}
+	call(setWindowText, statusLabel, uintptr(unsafe.Pointer(u16(s))))
+}
 
 func updateDevices() {
 	previous := uint64(0)
@@ -371,18 +470,30 @@ func updateDevices() {
 }
 
 func sendUI(msg string) {
+	if webMode {
+		logUI(msg)
+		return
+	}
 	uiMu.Lock()
 	uiMessages = append(uiMessages, msg)
 	uiMu.Unlock()
 	call(postMessage, window, WM_LOG, 0, 0)
 }
 func sendAlert(kind, title, body string) {
+	if webMode {
+		processWebAlert(kind, title, body)
+		return
+	}
 	uiMu.Lock()
 	uiAlerts = append(uiAlerts, alertMessage{kind: kind, title: title, body: body})
 	uiMu.Unlock()
 	call(postMessage, window, WM_ALERT, 0, 0)
 }
 func sendStatus(msg string) {
+	if webMode {
+		setStatus(msg)
+		return
+	}
 	uiMu.Lock()
 	uiMessages = append(uiMessages, "状态："+msg)
 	uiMu.Unlock()
@@ -544,6 +655,8 @@ func saveHistory(entries []historyEntry) error {
 }
 
 func appendHistory(title, body string) {
+	historyMu.Lock()
+	defer historyMu.Unlock()
 	entries := append(readHistory(), historyEntry{time.Now(), title, body})
 	if len(entries) > 30 {
 		entries = entries[len(entries)-30:]
@@ -553,6 +666,8 @@ func appendHistory(title, body string) {
 	}
 }
 func loadHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
 	entries := readHistory()
 	if err := saveHistory(entries); err != nil {
 		logUI("清理过期记录失败：" + err.Error())
@@ -562,26 +677,32 @@ func loadHistory() {
 	call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(string(data)))))
 }
 func clearHistory() {
+	historyMu.Lock()
+	defer historyMu.Unlock()
 	if err := os.Remove(historyPath()); err != nil && !os.IsNotExist(err) {
 		logUI("清空记录失败：" + err.Error())
 		return
 	}
-	call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(""))))
+	if !webMode {
+		call(setWindowText, logEdit, uintptr(unsafe.Pointer(u16(""))))
+	}
+	clearWebLogs()
 	logUI("历史通知已清空")
 }
 func startConnection() {
+	selected := int(call(sendMessage, combo, CB_GETCURSEL, 0, 0))
+	if selected < 0 || selected >= len(btDevices) {
+		call(messageBox, window, uintptr(unsafe.Pointer(u16("请先配对并选择手机"))), uintptr(unsafe.Pointer(u16("提示"))), MB_OK|MB_ICONWARNING)
+		return
+	}
+	startConnectionTo(btDevices[selected])
+}
+func startConnectionTo(device btDevice) {
 	connMu.Lock()
 	if cancel != nil {
 		connMu.Unlock()
 		return
 	}
-	selected := int(call(sendMessage, combo, CB_GETCURSEL, 0, 0))
-	if selected < 0 || selected >= len(btDevices) {
-		connMu.Unlock()
-		call(messageBox, window, uintptr(unsafe.Pointer(u16("请先配对并选择手机"))), uintptr(unsafe.Pointer(u16("提示"))), MB_OK|MB_ICONWARNING)
-		return
-	}
-	device := btDevices[selected]
 	saveAddress(device.address)
 	cancel = make(chan struct{})
 	c := cancel
@@ -792,13 +913,22 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case WM_TRAY:
 		if lParam == WM_LBUTTONDBLCLK || lParam == WM_RBUTTONUP {
-			call(showWindow, window, SW_RESTORE)
-			call(updateWindow, window)
+			target := window
+			if webMode && webWindow != 0 {
+				target = webWindow
+			}
+			call(showWindow, target, SW_RESTORE)
+			call(updateWindow, target)
 		}
 		return 0
+	case WM_DRAWITEM:
+		if lParam != 0 {
+			drawGlassItem((*drawItem)(unsafe.Pointer(lParam)))
+			return 1
+		}
 	case WM_CTLCOLORSTATIC:
 		call(setBkMode, wParam, 1)
-		if lParam == headerPanel || lParam == headerTitle || lParam == headerSubtitle || lParam == alertHeader {
+		if lParam == headerTitle || lParam == headerSubtitle || lParam == alertHeader {
 			if lParam == headerSubtitle {
 				call(setTextColor, wParam, 0x00F5E6DB)
 			} else {
@@ -806,8 +936,11 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			}
 			return headerBrush
 		}
-		call(setTextColor, wParam, 0x0035291E)
-		return backgroundBrush
+		call(setTextColor, wParam, color(39, 59, 90))
+		if lParam == footerLabel {
+			return backgroundBrush
+		}
+		return cardBrush
 	case WM_CLOSE:
 		if !closing {
 			call(showWindow, window, SW_HIDE)
@@ -826,7 +959,7 @@ func windowProcedure(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	return call(defWindowProc, hwnd, uintptr(msg), wParam, lParam)
 }
 
-func main() {
+func legacyMain() {
 	runtime.LockOSThread()
 	if err := wsaStart(); err != nil {
 		call(messageBox, 0, uintptr(unsafe.Pointer(u16(err.Error()))), uintptr(unsafe.Pointer(u16("蓝牙启动失败"))), MB_OK|MB_ICONWARNING)
@@ -835,55 +968,79 @@ func main() {
 	defer call(wsaCleanup)
 	className := u16("BluetoothPhoneAlertsGoWindow")
 	instance := call(getModuleHandle, 0)
-	backgroundBrush = call(createSolidBrush, 0x00FBF7F4)
-	headerBrush = call(createSolidBrush, 0x00EB6326)
-	uiFont = call(createFont, uintptr(^uint32(15)), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0,
-		uintptr(unsafe.Pointer(u16("Segoe UI"))))
-	titleFont = call(createFont, uintptr(^uint32(27)), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0,
-		uintptr(unsafe.Pointer(u16("Segoe UI"))))
+	backgroundBrush = call(createSolidBrush, color(235, 243, 255))
+	headerBrush = call(createSolidBrush, color(55, 105, 225))
+	cardBrush = call(createSolidBrush, color(255, 255, 255))
+	mutedBrush = call(createSolidBrush, color(245, 249, 255))
+	uiFont = call(createFont, uintptr(^uint32(17)), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0,
+		uintptr(unsafe.Pointer(u16("Microsoft YaHei UI"))))
+	titleFont = call(createFont, uintptr(^uint32(31)), 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0,
+		uintptr(unsafe.Pointer(u16("Microsoft YaHei UI"))))
+	sectionFont = call(createFont, uintptr(^uint32(20)), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0,
+		uintptr(unsafe.Pointer(u16("Microsoft YaHei UI"))))
 	trayIcon = call(loadIcon, 0, 32516) // IDI_INFORMATION
 	wc := wndClassEx{size: uint32(unsafe.Sizeof(wndClassEx{})), style: 3, wndProc: syscall.NewCallback(windowProcedure), instance: instance,
 		cursor: call(loadCursor, 0, 32512), icon: trayIcon, iconSmall: trayIcon, background: backgroundBrush, className: className}
 	if call(registerClass, uintptr(unsafe.Pointer(&wc))) == 0 {
 		return
 	}
-	window = call(createWindow, 0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(u16("蓝牙来电短信提醒（纯蓝牙）"))),
-		WS_OVERLAPPEDWINDOW, 120, 100, 720, 550, 0, 0, instance, 0)
+	window = call(createWindow, 0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(u16("蓝牙提醒助手 · Glass"))),
+		WS_OVERLAPPEDWINDOW, 120, 100, 800, 650, 0, 0, instance, 0)
 	if window == 0 {
 		return
 	}
-	headerPanel = control("STATIC", "", 0, 0, 0, 704, 104, 0)
-	headerTitle = control("STATIC", "蓝牙提醒助手", 0, 26, 18, 350, 40, 0)
+	cornerPreference, backdrop := uint32(2), uint32(3)
+	call(dwmSetAttribute, window, 33, uintptr(unsafe.Pointer(&cornerPreference)), 4)
+	call(dwmSetAttribute, window, 38, uintptr(unsafe.Pointer(&backdrop)), 4)
+	headerPanel = control("STATIC", "", SS_OWNERDRAW, 18, 16, 748, 116, 0)
+	headerTitle = control("STATIC", "蓝牙提醒助手", 0, 45, 38, 400, 42, 0)
 	call(sendMessage, headerTitle, WM_SETFONT, titleFont, 1)
-	headerSubtitle = control("STATIC", "让手机来电与短信及时出现在电脑上", 0, 28, 62, 430, 26, 0)
-	control("STATIC", "已配对设备", 0, 24, 127, 95, 26, 0)
-	combo = control("COMBOBOX", "", CBS_DROPDOWNLIST|WS_VSCROLL, 124, 120, 550, 250, IDC_DEVICE)
-	control("BUTTON", "刷新设备", 0, 24, 164, 112, 38, IDC_REFRESH)
-	control("BUTTON", "连接 / 自动重连", 0, 148, 164, 174, 38, IDC_CONNECT)
-	control("BUTTON", "停止连接", 0, 334, 164, 120, 38, IDC_STOP)
-	control("BUTTON", "测试提醒", 0, 466, 164, 112, 38, IDC_TEST)
-	control("BUTTON", "退出", 0, 590, 164, 84, 38, IDC_EXIT)
-	control("STATIC", "连接状态", 0, 24, 226, 80, 25, 0)
-	statusLabel = control("STATIC", "未连接", 0, 108, 226, 566, 25, 0)
-	control("STATIC", "运行记录", 0, 24, 264, 100, 25, 0)
-	control("BUTTON", "清空记录", 0, 562, 258, 112, 30, IDC_CLEAR)
-	logEdit = control("EDIT", "", WS_BORDER|WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY, 24, 292, 650, 164, 0)
-	control("STATIC", "关闭窗口后仍会在系统托盘运行 · 双击托盘图标可重新打开", 0, 24, 472, 500, 24, 0)
+	headerSubtitle = control("STATIC", "来电与短信，轻盈地抵达电脑 · 仅通过蓝牙连接", 0, 46, 85, 590, 26, 0)
+	devicePanel = control("STATIC", "", SS_OWNERDRAW, 18, 147, 748, 168, 0)
+	label := control("STATIC", "已配对设备", 0, 42, 163, 190, 28, 0)
+	call(sendMessage, label, WM_SETFONT, sectionFont, 1)
+	combo = control("COMBOBOX", "", CBS_DROPDOWNLIST|WS_VSCROLL, 42, 194, 706, 250, IDC_DEVICE)
+	control("BUTTON", "刷新设备", BS_OWNERDRAW, 42, 246, 112, 42, IDC_REFRESH)
+	control("BUTTON", "连接 / 自动重连", BS_OWNERDRAW, 166, 246, 194, 42, IDC_CONNECT)
+	control("BUTTON", "停止连接", BS_OWNERDRAW, 372, 246, 116, 42, IDC_STOP)
+	control("BUTTON", "测试提醒", BS_OWNERDRAW, 500, 246, 116, 42, IDC_TEST)
+	control("BUTTON", "退出", BS_OWNERDRAW, 628, 246, 120, 42, IDC_EXIT)
+	statusPanel = control("STATIC", "", SS_OWNERDRAW, 18, 328, 748, 66, 0)
+	control("STATIC", "连接状态", 0, 42, 335, 110, 25, 0)
+	statusLabel = control("STATIC", "未连接", 0, 42, 358, 680, 28, 0)
+	historyPanel = control("STATIC", "", SS_OWNERDRAW, 18, 407, 748, 172, 0)
+	label = control("STATIC", "运行记录", 0, 42, 416, 170, 30, 0)
+	call(sendMessage, label, WM_SETFONT, sectionFont, 1)
+	control("BUTTON", "清空记录", BS_OWNERDRAW, 636, 414, 112, 34, IDC_CLEAR)
+	logClass := "RICHEDIT50W"
+	if msftedit.Load() != nil {
+		logClass = "EDIT"
+	}
+	logEdit = control(logClass, "", WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY, 42, 456, 706, 108, 0)
+	call(sendMessage, logEdit, EM_SETLIMITTEXT, 200000, 0)
+	if logClass == "RICHEDIT50W" {
+		call(sendMessage, logEdit, EM_SETBKGNDCOLOR, 0, color(250, 252, 255))
+	}
+	footerLabel = control("STATIC", "关闭窗口后仍在托盘运行 · 双击托盘图标重新打开", 0, 42, 590, 680, 23, 0)
 	loadHistory()
 	tray(NIM_ADD, "", "")
 	updateDevices()
 	logUI("双击托盘图标可以打开窗口。关闭窗口会隐藏到后台。")
 	hidden := false
+	skipAutoConnect := false
 	for _, arg := range os.Args[1:] {
 		if strings.EqualFold(arg, "--background") {
 			hidden = true
+		}
+		if strings.EqualFold(arg, "--no-auto-connect") {
+			skipAutoConnect = true
 		}
 	}
 	if !hidden {
 		call(showWindow, window, SW_SHOW)
 		call(updateWindow, window)
 	}
-	if loadSavedAddress() != 0 {
+	if !skipAutoConnect && loadSavedAddress() != 0 {
 		startConnection()
 	}
 	var m winMsg

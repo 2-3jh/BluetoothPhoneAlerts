@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="ambient a1"></div><div class="ambient a2"></div><div class="noise"></div>
+  <main class="shell">
+    <header class="hero glass">
+      <div class="brand-mark"><span></span><span></span><span></span></div>
+      <div><p class="eyebrow">BLUETOOTH PHONE ALERTS</p><h1>蓝牙提醒助手</h1><p>来电与短信，轻盈地抵达电脑</p></div>
+      <div id="connectionPill" class="pill"><i></i><span>正在读取状态</span></div>
+    </header>
+
+    <section class="device glass">
+      <div class="section-head"><div><span class="kicker">已配对设备</span><h2>选择你的手机</h2></div><button class="icon-button" onclick="refreshDevices()" title="刷新设备">↻</button></div>
+      <div id="devices" class="device-list"><div class="skeleton"></div></div>
+      <div class="actions">
+        <button class="primary" onclick="connectSelected()"><span>连接 / 自动重连</span><b>→</b></button>
+        <button onclick="nativeStop()">停止连接</button><button onclick="nativeTest()">测试提醒</button>
+      </div>
+    </section>
+
+    <section class="status glass">
+      <div class="status-icon">⌁</div><div><span class="kicker">实时状态</span><h3 id="status">未连接</h3></div>
+      <div class="signal"><i></i><i></i><i></i><i></i></div>
+    </section>
+
+    <section class="history glass">
+      <div class="section-head"><div><span class="kicker">最近活动</span><h2>运行记录</h2></div><button class="danger-quiet" onclick="clearHistory()">清空记录</button></div>
+      <div id="logs" class="timeline"></div>
+    </section>
+
+    <footer><span>纯蓝牙 · 不经过云端</span><span>最多保留 30 条，最长 7 天</span><button onclick="nativeExit()">退出程序</button></footer>
+  </main>
+  <div id="toastRoot" class="toast-root"></div>
+  <script src="app.js"></script>
+</body>
+</html>

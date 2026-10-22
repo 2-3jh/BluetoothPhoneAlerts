@@ -1,6 +1,6 @@
 # BluetoothPhoneAlerts — Windows + Android 纯蓝牙来电 / 短信提醒
 
-> **v0.3.1 测试版**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。公开下载请到 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)；无需登录 GitHub。
+> **v0.4.0 测试版**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。公开下载请到 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)；无需登录 GitHub。
 >
 > **项目尚未在真实手机/Windows 设备上完成端到端验证**。APK 为调试签名，EXE 未做代码签名；这是供自行测试的版本，不是正式商店发行版。
 
@@ -11,6 +11,10 @@
 可单独下载编译后的 Windows 可执行文件包（文件名 `BluetoothPhoneAlerts.exe`）；测试方法：直接双击 → 点击 **「测试弹窗」**；手机 APK 准备好后，再配对手机并点击「连接 / 自动重连」。`install-windows.bat` 可选地设置开机启动。关闭窗口隐藏到托盘，点「退出程序」真正退出。原 `windows/BluetoothPhoneAlerts.Win` **C# 源码仍保留**，但此次编译出来的 EXE 是 **Go 版本，不是 C# 版本**；GitHub Actions 已改为用 Go 构建 EXE。
 
 **构建状态：Android APK 与 Windows EXE 已通过 GitHub Actions 构建，但尚未完成真实设备的双端联调。**
+
+## 2026-10-22：Windows 界面改为 Web 前端
+
+Windows 主界面现由内嵌的 **HTML / CSS / JavaScript** 渲染，使用 WebView2 呈现液态玻璃风格、设备卡片、状态栏、时间线记录和前端提醒卡片；Go 继续负责蓝牙、托盘、自动重连和本地历史。页面资源直接打包在 EXE 内，不访问远程网页。Windows 11 自带 WebView2 Runtime；精简版 Windows 10 若缺少该组件，需要安装微软的 WebView2 Runtime。
 
 ---
 
@@ -38,7 +42,7 @@
 ## 技术怎么选？
 
 - 安卓端：**Java**，负责接收系统短信/来电事件并暴露蓝牙 Classic RFCOMM 服务。
-- Windows 端：**优先使用已交叉编译的 Go 原生 Windows EXE**，无需依赖运行时。旧 C#/.NET 8 WinForms + 32feet.NET 客户端源码作为备选保留；GH Actions 默认编译 Go 版本。
+- Windows 端：**Go 蓝牙后端 + 内嵌 HTML/CSS/JavaScript 前端**，通过系统 WebView2 显示；旧 C#/.NET 8 WinForms 客户端源码作为备选保留。
 - Windows 端可以改成 **Python**，但蓝牙 RFCOMM 服务发现通常需要额外库（如 PyBluez2），配置和打包比现有版本繁琐。
 - Windows 端可以改成 **Node.js**，通过 npm 安装 RFCOMM 库（如 `bluetooth-serial-port`），但有原生二进制依赖，可能触发 C++ 编译；而且需适配本项目自定义 UUID 的服务发现。
 - **npm 是 Node.js 的包管理器，不是一种服务端编程语言**。
