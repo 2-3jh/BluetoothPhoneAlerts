@@ -8,6 +8,8 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
@@ -26,11 +28,18 @@ import java.nio.charset.StandardCharsets;
 public final class BluetoothServerService extends Service {
     private static final String TAG = "BtPhoneAlerts";
     private static final String CHANNEL = "btphone_channel";
+    private static final long BATTERY_CHECK_INTERVAL_MS = 60_000L;
     private volatile boolean running = false;
     private Thread worker;
     private volatile BluetoothServerSocket serverSocket;
     private volatile BluetoothSocket clientSocket;
     private static volatile boolean active = false;
+    private String lastBatteryBody;
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (clientSocket != null) queuePhoneStatus(intent, false);
+        }
+    };
 
     public static boolean isRunning() { return active; }
 
@@ -39,6 +48,7 @@ public final class BluetoothServerService extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel(
                 CHANNEL, "蓝牙连接服务", NotificationManager.IMPORTANCE_LOW));
+        registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -75,7 +85,6 @@ public final class BluetoothServerService extends Service {
                     BluetoothSocket socket = serverSocket.accept();
                     if (!running) { socket.close(); break; }
                     clientSocket = socket;
-                    queuePhoneStatus();
                     try { handleClient(socket); }
                     finally {
                         try { socket.close(); } catch (Exception ignored) {}
@@ -93,7 +102,11 @@ public final class BluetoothServerService extends Service {
 
     private void queuePhoneStatus() {
         Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        if (battery == null) return;
+        queuePhoneStatus(battery, false);
+    }
+
+    private synchronized void queuePhoneStatus(Intent battery, boolean force) {
+        if (battery == null || !running || clientSocket == null) return;
         int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
         int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
@@ -102,6 +115,8 @@ public final class BluetoothServerService extends Service {
                 status == BatteryManager.BATTERY_STATUS_FULL;
         String body = (percent < 0 ? "电量未知" : "电量 " + percent + "%") +
                 (charging ? " · 正在充电" : " · 未充电");
+        if (!force && body.equals(lastBatteryBody)) return;
+        lastBatteryBody = body;
         EventStore.add(this, "status", "手机状态", body);
     }
 
@@ -110,10 +125,17 @@ public final class BluetoothServerService extends Service {
         if (socket.getRemoteDevice().getBondState() != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             return;
         }
+        Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        queuePhoneStatus(battery, true);
+        long nextBatteryCheck = SystemClock.elapsedRealtime() + BATTERY_CHECK_INTERVAL_MS;
         BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
                 socket.getOutputStream(), StandardCharsets.UTF_8));
         InputStream in = socket.getInputStream();
         while (running) {
+            if (SystemClock.elapsedRealtime() >= nextBatteryCheck) {
+                queuePhoneStatus();
+                nextBatteryCheck = SystemClock.elapsedRealtime() + BATTERY_CHECK_INTERVAL_MS;
+            }
             JSONObject next = EventStore.peek(this);
             if (next == null) {
                 SystemClock.sleep(400);
@@ -154,6 +176,7 @@ public final class BluetoothServerService extends Service {
     @Override public void onDestroy() {
         running = false;
         active = false;
+        unregisterReceiver(batteryReceiver);
         closeServer();
         try { if (clientSocket != null) clientSocket.close(); } catch (Exception ignored) {}
         Thread oldWorker = worker;

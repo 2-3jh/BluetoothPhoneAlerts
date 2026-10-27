@@ -34,7 +34,10 @@ public final class EventStore {
             JSONArray next = new JSONArray();
             // Keep the last 99 events, plus the new one.
             for (int i = Math.max(0, old.length() - 99); i < old.length(); i++) {
-                next.put(old.getJSONObject(i));
+                JSONObject queued = old.getJSONObject(i);
+                // A status update supersedes older battery readings, never calls or SMS.
+                if (kind.equals("status") && queued.optString("type").equals("status")) continue;
+                next.put(queued);
             }
             JSONObject alert = new JSONObject();
             alert.put("id", UUID.randomUUID().toString());
