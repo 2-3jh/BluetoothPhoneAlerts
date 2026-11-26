@@ -1,8 +1,10 @@
 # BluetoothPhoneAlerts — Windows + Android 纯蓝牙来电 / 短信提醒
 
-> **v0.4.2 测试版**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。公开下载请到 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)；无需登录 GitHub。
+> **v0.5.0 测试版**。只需在手机安装 APK、电脑运行 EXE，两端蓝牙配对即可。**用户运行时不必安装 Python、Node.js、Java、.NET 或 Android Studio**。公开下载请到 [Releases](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)；无需登录 GitHub。
 >
 > **项目尚未在真实手机/Windows 设备上完成端到端验证**。APK 为调试签名，EXE 未做代码签名；这是供自行测试的版本，不是正式商店发行版。
+
+v0.5.0 新增手机向电脑发送文字和图片：在手机页面输入文字或选择一张不超过 5 MB 的图片；离线时排队，连接后通过已配对的蓝牙传送。图片分块发送并校验 SHA-256，接收成功后保存在电脑 `%LOCALAPPDATA%\BluetoothPhoneAlerts\Received`，也可从电脑端点击“打开图片文件夹”。**新功能需要手机 APK 和电脑 EXE 同时升级到 v0.5.0**；旧版电脑端不认识图片分块协议。
 
 ## 2026-10-19：已编译 Windows x64 客户端（Go 原生程序）
 

@@ -5,23 +5,33 @@ import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_PERMS = 123;
+    private static final int REQUEST_IMAGE = 124;
+    private static final long MAX_IMAGE_BYTES = 5L * 1024 * 1024;
     private static final int BLUE = Color.rgb(38, 99, 235);
     private static final int NAVY = Color.rgb(20, 35, 70);
     private static final int INK = Color.rgb(30, 41, 59);
@@ -30,6 +40,7 @@ public final class MainActivity extends Activity {
     private TextView statusDetail;
     private Button startButton;
     private Button stopButton;
+    private EditText transferText;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -49,6 +60,8 @@ public final class MainActivity extends Activity {
         page.addView(stepsCard(), matchWrap());
         page.addView(space(18));
         page.addView(actions(), matchWrap());
+        page.addView(space(14));
+        page.addView(transferCard(), matchWrap());
         page.addView(space(14));
         page.addView(privacyNote(), matchWrap());
         setContentView(scroll);
@@ -144,11 +157,101 @@ public final class MainActivity extends Activity {
     }
 
     private View privacyNote() {
-        TextView note = text("隐私保护：短信内容、来电号码和联系人名称只会通过已配对的蓝牙连接发送到电脑，不联网。", 13, MUTED);
+        TextView note = text("隐私保护：短信、来电和主动发送的文字或图片只通过已配对蓝牙传到电脑，不联网。", 13, MUTED);
         note.setLineSpacing(0, 1.2f);
         note.setPadding(dp(14), dp(12), dp(14), dp(12));
         note.setBackground(rounded(Color.rgb(232, 245, 239), 14));
         return note;
+    }
+
+    private View transferCard() {
+        LinearLayout card = card();
+        TextView heading = text("发送到电脑", 18, INK);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        card.addView(heading);
+        TextView hint = text("可发送短文字或一张不超过 5 MB 的图片；未连接时会排队等待。", 13, MUTED);
+        hint.setPadding(0, dp(6), 0, dp(12));
+        card.addView(hint);
+        transferText = new EditText(this);
+        transferText.setHint("输入要发送的文字");
+        transferText.setMinLines(2);
+        transferText.setMaxLines(5);
+        transferText.setTextSize(15);
+        card.addView(transferText, matchWrap());
+        card.addView(space(10));
+        card.addView(button("发送文字", BLUE, Color.WHITE, v -> sendText()),
+                new LinearLayout.LayoutParams(-1, dp(48)));
+        card.addView(space(10));
+        card.addView(button("选择图片发送", Color.rgb(239, 246, 255), BLUE, v -> pickImage()),
+                new LinearLayout.LayoutParams(-1, dp(48)));
+        return card;
+    }
+
+    private void sendText() {
+        String value = transferText.getText().toString().trim();
+        if (value.isEmpty()) {
+            Toast.makeText(this, "先输入文字", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (value.length() > 1200) {
+            Toast.makeText(this, "文字最多 1200 字", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        EventStore.add(this, "text", "手机传来文字", value);
+        transferText.setText("");
+        Toast.makeText(this, "文字已加入蓝牙发送队列", Toast.LENGTH_SHORT).show();
+    }
+
+    private void pickImage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQUEST_IMAGE);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK || data == null || data.getData() == null)
+            return;
+        Uri uri = data.getData();
+        String name = "手机图片.jpg";
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (column >= 0 && cursor.getString(column) != null) name = cursor.getString(column);
+            }
+        } catch (Exception ignored) {}
+        final String selectedName = name;
+        new Thread(() -> queueImage(uri, selectedName), "queue-image").start();
+    }
+
+    private void queueImage(Uri uri, String name) {
+        File image = null;
+        try {
+            File directory = new File(getFilesDir(), "outgoing-images");
+            if (!directory.isDirectory() && !directory.mkdirs())
+                throw new IllegalStateException("无法建立图片缓存目录");
+            image = File.createTempFile("image-", ".bin", directory);
+            long copied = 0;
+            try (InputStream input = getContentResolver().openInputStream(uri);
+                 OutputStream output = new FileOutputStream(image)) {
+                if (input == null) throw new IllegalStateException("无法读取所选图片");
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    copied += count;
+                    if (copied > MAX_IMAGE_BYTES) throw new IllegalArgumentException("图片不能超过 5 MB");
+                    output.write(buffer, 0, count);
+                }
+            }
+            if (copied == 0) throw new IllegalArgumentException("图片为空");
+            EventStore.addImage(getApplicationContext(), name, image);
+            runOnUiThread(() -> Toast.makeText(this, "图片已加入蓝牙发送队列", Toast.LENGTH_SHORT).show());
+        } catch (Exception e) {
+            if (image != null) image.delete();
+            String message = e.getMessage() == null ? "图片发送准备失败" : e.getMessage();
+            runOnUiThread(() -> Toast.makeText(this, message, Toast.LENGTH_LONG).show());
+        }
     }
 
     private void refreshStatus() {

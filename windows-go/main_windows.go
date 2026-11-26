@@ -828,6 +828,7 @@ func socketSend(sock uintptr, data []byte) error {
 func receiveLoop(sock uintptr, c <-chan struct{}) error {
 	var pending []byte
 	var buf [1024]byte
+	var image *incomingImage
 	for !isCanceled(c) {
 		n, _, recvErr := wsaRecv.Call(sock, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0)
 		if n == SOCKET_ERROR {
@@ -844,12 +845,7 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 			}
 			line := bytes.TrimSpace(pending[:idx])
 			pending = pending[idx+1:]
-			var value struct {
-				ID    string `json:"id"`
-				Type  string `json:"type"`
-				Title string `json:"title"`
-				Body  string `json:"body"`
-			}
+			var value phoneMessage
 			if err := json.Unmarshal(line, &value); err != nil {
 				sendUI("忽略无效的手机消息")
 				continue
@@ -857,7 +853,21 @@ func receiveLoop(sock uintptr, c <-chan struct{}) error {
 			if len(value.ID) == 0 || len(value.ID) > 100 {
 				continue
 			}
-			if value.Type != "sms" && value.Type != "call" && value.Type != "test" && value.Type != "status" {
+			if value.Type != "sms" && value.Type != "call" && value.Type != "test" && value.Type != "status" && value.Type != "text" &&
+				value.Type != "image_start" && value.Type != "image_chunk" && value.Type != "image_end" {
+				continue
+			}
+			if strings.HasPrefix(value.Type, "image_") {
+				path, err := acceptImageFrame(&image, value, receivedImagesDir())
+				if err != nil {
+					return err
+				}
+				if err := socketSend(sock, []byte("ACK|"+value.ID+"\n")); err != nil {
+					return err
+				}
+				if path != "" {
+					sendAlert("image", "收到手机图片", path)
+				}
 				continue
 			}
 			if err := socketSend(sock, []byte("ACK|"+value.ID+"\n")); err != nil {

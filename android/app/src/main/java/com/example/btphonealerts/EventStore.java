@@ -2,6 +2,7 @@ package com.example.btphonealerts;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import java.io.File;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -28,7 +29,7 @@ public final class EventStore {
     }
 
     public static synchronized void add(Context c, String kind, String title, String body) {
-        if (!kind.equals("sms") && !kind.equals("call") && !kind.equals("test") && !kind.equals("status")) return;
+        if (!kind.equals("sms") && !kind.equals("call") && !kind.equals("test") && !kind.equals("status") && !kind.equals("text")) return;
         try {
             JSONArray old = load(c);
             JSONArray next = new JSONArray();
@@ -45,8 +46,37 @@ public final class EventStore {
             alert.put("title", limit(title, 160));
             alert.put("body", limit(body, 1200));
             next.put(alert);
-            pref(c).edit().putString(QUEUE, next.toString()).commit();
+            if (pref(c).edit().putString(QUEUE, next.toString()).commit())
+                deleteDroppedImages(old);
         } catch (JSONException ignored) {}
+    }
+
+    public static synchronized void addImage(Context c, String name, File file) {
+        try {
+            JSONArray old = load(c);
+            JSONArray next = new JSONArray();
+            for (int i = Math.max(0, old.length() - 99); i < old.length(); i++)
+                next.put(old.getJSONObject(i));
+            JSONObject item = new JSONObject();
+            item.put("id", UUID.randomUUID().toString());
+            item.put("type", "image");
+            item.put("title", limit(name, 160));
+            item.put("path", file.getAbsolutePath());
+            next.put(item);
+            if (!pref(c).edit().putString(QUEUE, next.toString()).commit())
+                throw new IllegalStateException("无法保存传输队列");
+            deleteDroppedImages(old);
+        } catch (JSONException e) {
+            throw new IllegalStateException("无法加入图片传输队列", e);
+        }
+    }
+
+    private static void deleteDroppedImages(JSONArray old) {
+        for (int i = 0; i < Math.max(0, old.length() - 99); i++) {
+            JSONObject dropped = old.optJSONObject(i);
+            if (dropped != null && "image".equals(dropped.optString("type")))
+                new File(dropped.optString("path")).delete();
+        }
     }
 
     private static String limit(String value, int max) {
@@ -65,6 +95,8 @@ public final class EventStore {
         if (first == null || !id.equals(first.optString("id"))) return;
         JSONArray next = new JSONArray();
         for (int i = 1; i < old.length(); i++) next.put(old.opt(i));
-        pref(c).edit().putString(QUEUE, next.toString()).commit();
+        if (pref(c).edit().putString(QUEUE, next.toString()).commit()
+                && "image".equals(first.optString("type")))
+            new File(first.optString("path")).delete();
     }
 }

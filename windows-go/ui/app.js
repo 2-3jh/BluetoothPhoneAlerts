@@ -37,6 +37,7 @@ async function connectSelected(){ if(!selectedAddress){showToast('请选择手�
 async function nativeStop(){ await appStop(); await syncState(); }
 async function nativeTest(){ await appTest(); await syncState(); }
 async function clearHistory(){ await appClear(); await syncState(); }
+async function openReceived(){ try { await appOpenReceived(); } catch(e) { showToast('无法打开图片文件夹', String(e)); } }
 function nativeExit(){ appExit(); }
 function showToast(title,body){ const t=document.createElement('div');t.className='toast';t.innerHTML=`<strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span>`;document.getElementById('toastRoot').appendChild(t);setTimeout(()=>t.remove(),6500); }
 syncState(); setInterval(syncState, 900);

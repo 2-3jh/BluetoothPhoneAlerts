@@ -17,18 +17,24 @@ import android.os.SystemClock;
 import android.os.BatteryManager;
 import android.content.IntentFilter;
 import android.util.Log;
+import android.util.Base64;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 public final class BluetoothServerService extends Service {
     private static final String TAG = "BtPhoneAlerts";
     private static final String CHANNEL = "btphone_channel";
     private static final long BATTERY_CHECK_INTERVAL_MS = 60_000L;
+    private static final long MAX_IMAGE_BYTES = 5L * 1024 * 1024;
+    private static final int IMAGE_CHUNK_BYTES = 4096;
     private volatile boolean running = false;
     private Thread worker;
     private volatile BluetoothServerSocket serverSocket;
@@ -141,6 +147,17 @@ public final class BluetoothServerService extends Service {
                 SystemClock.sleep(400);
                 continue;
             }
+            if ("image".equals(next.optString("type"))) {
+                File image = new File(next.optString("path"));
+                if (!image.isFile() || image.length() == 0 || image.length() > MAX_IMAGE_BYTES) {
+                    Log.w(TAG, "Discarding missing or invalid queued image");
+                    EventStore.removeIfFirstId(this, next.optString("id"));
+                    continue;
+                }
+                sendImage(next, image, out, in);
+                EventStore.removeIfFirstId(this, next.optString("id"));
+                continue;
+            }
             String id = next.optString("id");
             out.write(next.toString());
             out.newLine();
@@ -149,6 +166,43 @@ public final class BluetoothServerService extends Service {
             if (!("ACK|" + id).equals(ack)) throw new java.io.IOException("Invalid ACK");
             EventStore.removeIfFirstId(this, id);
         }
+    }
+
+    private void sendImage(JSONObject queued, File image, BufferedWriter out, InputStream in) throws Exception {
+        String transferId = queued.getString("id");
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (FileInputStream source = new FileInputStream(image)) {
+            byte[] buffer = new byte[IMAGE_CHUNK_BYTES];
+            int count;
+            while ((count = source.read(buffer)) != -1) digest.update(buffer, 0, count);
+        }
+        StringBuilder hash = new StringBuilder(64);
+        for (byte value : digest.digest()) hash.append(String.format(java.util.Locale.ROOT, "%02x", value & 0xff));
+        sendFrame(new JSONObject().put("id", transferId + ":start")
+                .put("type", "image_start").put("transferId", transferId)
+                .put("name", queued.optString("title", "手机图片"))
+                .put("size", image.length()).put("sha256", hash.toString()), out, in);
+        try (FileInputStream source = new FileInputStream(image)) {
+            byte[] buffer = new byte[IMAGE_CHUNK_BYTES];
+            int count, index = 0;
+            while ((count = source.read(buffer)) != -1) {
+                sendFrame(new JSONObject().put("id", transferId + ":" + index)
+                        .put("type", "image_chunk").put("transferId", transferId)
+                        .put("index", index)
+                        .put("data", Base64.encodeToString(buffer, 0, count, Base64.NO_WRAP)), out, in);
+                index++;
+            }
+        }
+        sendFrame(new JSONObject().put("id", transferId + ":end")
+                .put("type", "image_end").put("transferId", transferId), out, in);
+    }
+
+    private void sendFrame(JSONObject frame, BufferedWriter out, InputStream in) throws IOException {
+        out.write(frame.toString());
+        out.newLine();
+        out.flush();
+        String id = frame.optString("id");
+        if (!("ACK|" + id).equals(readAck(in))) throw new IOException("Invalid transfer ACK");
     }
 
     /** Poll a short ACK line with timeout; BluetoothSocket has no setSoTimeout API. */
@@ -163,7 +217,7 @@ public final class BluetoothServerService extends Service {
                 if (bytes.size() >= 140) throw new IOException("ACK too long");
                 bytes.write(value);
             }
-            SystemClock.sleep(40L);
+            SystemClock.sleep(10L);
         }
         throw new IOException("Timed out waiting for ACK");
     }

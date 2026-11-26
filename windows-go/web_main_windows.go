@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -193,6 +194,17 @@ func bindWebAPI(w webview2.WebView) {
 	_ = w.Bind("appStop", func() error { stopConnection(); logUI("连接已手动停止"); return nil })
 	_ = w.Bind("appTest", func() error { showAlertsNow(); return nil })
 	_ = w.Bind("appClear", func() error { clearHistory(); return nil })
+	_ = w.Bind("appOpenReceived", func() error {
+		directory := receivedImagesDir()
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			return err
+		}
+		command := exec.Command("explorer.exe", directory)
+		if err := command.Start(); err != nil {
+			return err
+		}
+		return command.Process.Release()
+	})
 	_ = w.Bind("appExit", func() error {
 		w.Dispatch(func() { closing = true; call(destroyWindow, webWindow) })
 		return nil
