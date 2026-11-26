@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 const maxImageBytes = 5 * 1024 * 1024
@@ -75,11 +77,12 @@ func acceptImageFrame(t **incomingImage, frame phoneMessage, directory string) (
 }
 
 func receivedImagesDir() string {
-	base := os.Getenv("LOCALAPPDATA")
-	if base == "" {
-		base, _ = os.UserConfigDir()
+	base, err := windows.KnownFolderPath(windows.FOLDERID_Downloads, 0)
+	if err != nil || base == "" {
+		home, _ := os.UserHomeDir()
+		base = filepath.Join(home, "Downloads")
 	}
-	return filepath.Join(base, "BluetoothPhoneAlerts", "Received")
+	return filepath.Join(base, "蓝牙互联")
 }
 
 func safeImageName(name string) string {

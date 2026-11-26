@@ -2,7 +2,7 @@
 
 Android 手机与 Windows 电脑之间的来电、短信、电量同步，以及手机向电脑发送文字和图片。通过已配对的蓝牙连接传输，无需 Wi-Fi、账号或云服务。
 
-当前版本：**v0.5.1 测试版**。[下载安装包](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)，无需登录 GitHub。
+当前版本：**v0.5.2 测试版**。[下载安装包](https://github.com/2-3jh/BluetoothPhoneAlerts/releases)，无需登录 GitHub。
 
 ## 功能
 
@@ -31,12 +31,16 @@ Windows 使用内嵌 HTML/CSS/JavaScript 和 WebView2；缺少 WebView2 Runtime 
 
 ## 图片与记录
 
-- 电脑图片目录：`%LOCALAPPDATA%\BluetoothPhoneAlerts\Received`，可点击“打开图片文件夹”；同名文件自动编号。
+- 电脑图片目录：Windows“下载”文件夹中的“蓝牙互联”子文件夹，可点击“打开图片文件夹”；支持系统中移动过的下载目录，同名文件自动编号。v0.5.2 之前收到的图片仍在 `%LOCALAPPDATA%\BluetoothPhoneAlerts\Received`，不会自动搬移。
 - 电脑通知历史：`%LOCALAPPDATA%\BluetoothPhoneAlerts\notification-history.txt`，最多 30 条、最长 7 天，可点击“清空记录”。
 - **清空通知记录不会删除图片；已接收图片不会按 7 天自动清理，需自行管理。**
 - 手机队列存于应用私有目录，最多 100 条，满后淘汰旧条目；待发图片也保存在私有目录，确认发送后删除缓存。加入队列不代表电脑已经接收。
 
 内容保存在本地，通知历史为明文，请注意设备隐私。蓝牙采用 secure RFCOMM，只允许已配对设备连接。
+
+## v0.5.2 更新
+
+- 新收到的图片保存到 Windows“下载/蓝牙互联”，文件夹按钮同步更新。这项改动需更新电脑 EXE；手机 v0.5.1 可继续使用。
 
 ## v0.5.1 更新
 
