@@ -40,6 +40,7 @@ public final class BluetoothServerService extends Service {
     private volatile BluetoothServerSocket serverSocket;
     private volatile BluetoothSocket clientSocket;
     private static volatile boolean active = false;
+    private static volatile boolean connected = false;
     private String lastBatteryBody;
     private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -48,6 +49,20 @@ public final class BluetoothServerService extends Service {
     };
 
     public static boolean isRunning() { return active; }
+    public static boolean isConnected() { return connected; }
+
+    private Notification serviceNotification() {
+        return new Notification.Builder(this, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setContentTitle("来电短信蓝牙提醒")
+                .setContentText(connected ? "已连接电脑 · 可发送文字与图片" : "等待 Windows 电脑连接蓝牙")
+                .setOngoing(true).build();
+    }
+
+    private void setConnected(boolean value) {
+        connected = value;
+        if (running) getSystemService(NotificationManager.class).notify(1, serviceNotification());
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -58,11 +73,7 @@ public final class BluetoothServerService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification notification = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                .setContentTitle("来电短信蓝牙提醒")
-                .setContentText("等待 Windows 电脑连接蓝牙")
-                .setOngoing(true).build();
+        Notification notification = serviceNotification();
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         } else {
@@ -95,6 +106,7 @@ public final class BluetoothServerService extends Service {
                     finally {
                         try { socket.close(); } catch (Exception ignored) {}
                         clientSocket = null;
+                        setConnected(false);
                     }
                 }
             } catch (Exception e) {
@@ -131,6 +143,7 @@ public final class BluetoothServerService extends Service {
         if (socket.getRemoteDevice().getBondState() != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             return;
         }
+        setConnected(true);
         Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         queuePhoneStatus(battery, true);
         long nextBatteryCheck = SystemClock.elapsedRealtime() + BATTERY_CHECK_INTERVAL_MS;
@@ -139,7 +152,7 @@ public final class BluetoothServerService extends Service {
         InputStream in = socket.getInputStream();
         while (running) {
             if (SystemClock.elapsedRealtime() >= nextBatteryCheck) {
-                queuePhoneStatus();
+                queuePhoneStatus(registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED)), true);
                 nextBatteryCheck = SystemClock.elapsedRealtime() + BATTERY_CHECK_INTERVAL_MS;
             }
             JSONObject next = EventStore.peek(this);
@@ -230,6 +243,7 @@ public final class BluetoothServerService extends Service {
     @Override public void onDestroy() {
         running = false;
         active = false;
+        connected = false;
         unregisterReceiver(batteryReceiver);
         closeServer();
         try { if (clientSocket != null) clientSocket.close(); } catch (Exception ignored) {}

@@ -41,6 +41,12 @@ public final class MainActivity extends Activity {
     private Button startButton;
     private Button stopButton;
     private EditText transferText;
+    private final Runnable statusRefresh = new Runnable() {
+        @Override public void run() {
+            refreshStatus();
+            statusTitle.postDelayed(this, 1000L);
+        }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -70,7 +76,13 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        refreshStatus();
+        statusTitle.removeCallbacks(statusRefresh);
+        statusTitle.post(statusRefresh);
+    }
+
+    @Override protected void onPause() {
+        statusTitle.removeCallbacks(statusRefresh);
+        super.onPause();
     }
 
     private View hero() {
@@ -169,7 +181,7 @@ public final class MainActivity extends Activity {
         TextView heading = text("发送到电脑", 18, INK);
         heading.setTypeface(Typeface.DEFAULT_BOLD);
         card.addView(heading);
-        TextView hint = text("可发送短文字或一张不超过 5 MB 的图片；未连接时会排队等待。", 13, MUTED);
+        TextView hint = text("可发送短文字或多张图片（一次最多 20 张，每张不超过 5 MB）；未连接时排队等待。", 13, MUTED);
         hint.setPadding(0, dp(6), 0, dp(12));
         card.addView(hint);
         transferText = new EditText(this);
@@ -206,14 +218,31 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(intent, REQUEST_IMAGE);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK || data == null || data.getData() == null)
+        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK || data == null)
             return;
-        Uri uri = data.getData();
+        List<Uri> images = new ArrayList<>();
+        if (data.getClipData() != null) {
+            if (data.getClipData().getItemCount() > 20) {
+                Toast.makeText(this, "一次最多选择 20 张图片", Toast.LENGTH_LONG).show();
+                return;
+            }
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                Uri uri = data.getClipData().getItemAt(i).getUri();
+                if (uri != null && !images.contains(uri)) images.add(uri);
+            }
+        } else if (data.getData() != null) images.add(data.getData());
+        new Thread(() -> {
+            for (Uri uri : images) queueSelectedImage(uri);
+        }, "queue-images").start();
+    }
+
+    private void queueSelectedImage(Uri uri) {
         String name = "手机图片.jpg";
         try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) {
@@ -221,8 +250,7 @@ public final class MainActivity extends Activity {
                 if (column >= 0 && cursor.getString(column) != null) name = cursor.getString(column);
             }
         } catch (Exception ignored) {}
-        final String selectedName = name;
-        new Thread(() -> queueImage(uri, selectedName), "queue-image").start();
+        queueImage(uri, name);
     }
 
     private void queueImage(Uri uri, String name) {
@@ -257,10 +285,11 @@ public final class MainActivity extends Activity {
     private void refreshStatus() {
         if (statusTitle == null) return;
         boolean running = BluetoothServerService.isRunning();
-        statusTitle.setText(running ? "正在等待电脑连接" : "服务尚未启动");
+        boolean connected = BluetoothServerService.isConnected();
+        statusTitle.setText(running ? (connected ? "已连接电脑" : "正在等待电脑连接") : "服务尚未启动");
         statusTitle.setTextColor(running ? Color.rgb(5, 150, 105) : INK);
         statusDetail.setText(running
-                ? "服务正在后台运行。保持蓝牙开启，然后在 Windows 端点击连接。"
+                ? (connected ? "蓝牙连接正常，可同步提醒、电量以及发送文字和图片。" : "服务正在后台运行。保持蓝牙开启，然后在 Windows 端点击连接。")
                 : "点击下方按钮启动安全的 RFCOMM 蓝牙服务。");
         startButton.setEnabled(!running);
         startButton.setAlpha(running ? 0.55f : 1f);
